@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MILO - Match Information & Logging Organizer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+body { font-family: Arial, sans-serif; padding:20px; background:#f0f0f0; margin:0; }
+h1 { text-align:center; margin-top:20px; }
+.top-bar { position: fixed; top: 10px; right:10px; display:flex; flex-wrap:wrap; gap:5px; align-items:center; z-index:5; }
+.top-bar button { font-size:1em; padding:10px 14px; cursor:pointer; }
+.timers { display:flex; justify-content: space-around; margin-top:40px; flex-wrap: wrap; }
+.timer-box { border:1px solid #aaa; border-radius:5px; background:white; padding:15px; width:300px; text-align:center; margin-bottom:15px; flex:1 1 280px; }
+.time { font-size:2em; margin:10px 0; }
+.controls button { margin:5px; padding:10px 14px; font-size:1em; }
+.counter { display:flex; justify-content:center; align-items:center; margin:6px 0; }
+.counter button { width:50px; height:50px; font-size:1.2em; }
+.counter span { width:50px; text-align:center; font-size:1.1em; }
+#recordBtn { display:none; margin:25px auto 10px; padding:15px 20px; font-size:1.2em; cursor:pointer; width:90%; max-width:300px; }
+#transcript { width:90%; max-width:700px; display:block; margin:5px auto 10px; height:250px; padding:10px; font-family:monospace; resize: vertical; }
+#copyBtn { padding:10px 14px; cursor:pointer; font-size:1em; margin-bottom:5px; }
+.modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:10; }
+.panel { background:white; width:90%; max-width:400px; margin:120px auto; padding:20px; position:relative; text-align:center; border-radius:8px; }
+.close { position:absolute; top:5px; right:8px; cursor:pointer; font-size:1.5em; }
+input[type=number], input[type=text] { width:50px; height:42px; padding:4px; font-size:1.2em; text-align:center; }
+.panel button { padding:12px 20px; font-size:1.2em; margin:8px; cursor:pointer; }
+.setting-control { display:flex; align-items:center; justify-content:center; margin:5px; gap:5px; flex-wrap:wrap; }
+.setting-control button { width:50px; height:50px; font-size:1.2em; padding:0; }
+.setting-control label { font-size:1.2em; }
+.setting-control span { width:40px; text-align:left; font-size:1.2em; display:inline-block; }
+</style>
+</head>
+<body>
+
+<h1>MILO - Match Information & Logging Organizer</h1>
+
+<div class="top-bar">
+  <button onclick="regenerateTranscript()">Regenerate Transcript</button>
+  <button onclick="askRestartAll()">Restart All</button>
+  <button onclick="openSettings()">Settings</button>
+</div>
+
+<div class="timers">
+  <div class="timer-box" id="timer1"></div>
+  <div class="timer-box" id="timer2"></div>
+</div>
+
+<button id="recordBtn" onclick="recordRound()">Record Round</button>
+
+<div style="width:90%; max-width:700px; margin:10px auto 0;">
+  <button id="copyBtn" onclick="copyTranscript()">Copy Text</button>
+</div>
+
+<textarea id="transcript"></textarea>
+
+<div id="resetModal" class="modal">
+  <div class="panel">
+    <p>Are you sure you want to reset this timer?</p>
+    <button onclick="confirmReset()">Yes</button>
+    <button onclick="closeReset()">No</button>
+  </div>
+</div>
+
+<div id="restartAllModal" class="modal">
+  <div class="panel">
+    <p>Are you sure you want to restart all?</p>
+    <button onclick="confirmRestartAll()">Yes</button>
+    <button onclick="closeRestartAll()">No</button>
+  </div>
+</div>
+
+<div id="settingsModal" class="modal">
+  <div class="panel">
+    <div class="close" onclick="closeSettings()">✕</div>
+    <h3>Settings</h3>
+    <label><input type="checkbox" id="timeCapEnabled"> Enable Time Cap</label>
+    <div id="timeCapControls" style="flex-direction:column;">
+      <div class="setting-control">
+        <span>Min</span>
+        <button id="decCapMin">−</button>
+        <input type="number" id="capMin" value="3">
+        <button id="incCapMin">+</button>
+      </div>
+      <div class="setting-control">
+        <span>Sec</span>
+        <button id="decCapSec">−</button>
+        <input type="number" id="capSec" value="0">
+        <button id="incCapSec">+</button>
+      </div>
+    </div>
+    <hr>
+    <div class="setting-control">
+      <label>Start Time (sec)</label>
+      <button id="decStartTime">−</button>
+      <input type="number" id="startTimeInput" value="-10">
+      <button id="incStartTime">+</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function saveState(){
+  localStorage.setItem("miloState",JSON.stringify({
+    settings,rounds,t1:getTimerState(t1),t2:getTimerState(t2),transcript:transcript.value
+  }));
+}
+function loadState(){return JSON.parse(localStorage.getItem("miloState"))||null}
+
+const settings={startTime:-10,timeCapEnabled:true,capSeconds:180};
+let rounds=[],pendingReset=null;
+
+function formatTimerTime(sec){
+  const n=sec<0,a=Math.abs(sec),m=Math.floor(a/60),s=Math.floor(a%60),ms=Math.floor((a-Math.floor(a))*100);
+  return(n?"-":"")+`${m}:${s.toString().padStart(2,"0")}:${ms.toString().padStart(2,"0")}`;
+}
+function formatTranscriptTime(sec){
+  const n=sec<0,a=Math.abs(Math.round(sec)),m=Math.floor(a/60),s=a%60;
+  return(n?"-":"")+`${m}:${s.toString().padStart(2,"0")}`;
+}
+
+function createTimer(id){
+  let time=settings.startTime,interval=null,points=0,warnings=0;
+  const el=document.getElementById(id);
+  el.innerHTML=`<input placeholder="Team Name"><div class="time"></div><div class="controls"></div>
+  <div class="counter"><span>Points</span></div><div class="counter"><button>-</button><span>0</span><button>+</button></div>
+  <div class="counter"><span>Warnings</span></div><div class="counter"><button>-</button><span>0</span><button>+</button></div>`;
+  const nameInput=el.querySelector("input"),timeDisplay=el.querySelector(".time"),controls=el.querySelector(".controls"),spans=el.querySelectorAll("span");
+
+  function updateControls(){
+    controls.innerHTML="";
+    const b=document.createElement("button");
+    b.textContent=interval?"Pause":"Start";
+    b.onclick=interval?pause:start;
+    controls.appendChild(b);
+    const r=document.createElement("button");
+    r.textContent="Reset";
+    r.onclick=()=>askReset(reset);
+    controls.appendChild(r);
+  }
+  function tick(){
+    time+=0.01;
+    if(settings.timeCapEnabled&&time>=settings.capSeconds)pause();
+    timeDisplay.textContent=formatTimerTime(time);
+    checkRecord();saveState();
+  }
+  function start(){if(!interval){interval=setInterval(tick,10);updateControls()}}
+  function pause(){clearInterval(interval);interval=null;updateControls();saveState()}
+  function reset(){
+    pause();time=settings.startTime;points=0;warnings=0;
+    timeDisplay.textContent=formatTimerTime(time);
+    spans[1].textContent=points;spans[3].textContent=warnings;
+    checkRecord();saveState();
+  }
+  function resetTimeOnly(){
+    time=settings.startTime;
+    timeDisplay.textContent=formatTimerTime(time);
+    checkRecord();saveState();
+  }
+
+  function addHoldable(btn,fn){
+    let interval;
+    btn.onmousedown=()=>{
+      fn();
+      interval=setInterval(fn,120);
+    }
+    btn.onmouseup=btn.onmouseleave=()=>clearInterval(interval);
+  }
+
+  addHoldable(el.querySelectorAll(".counter")[1].children[0],()=>{points=Math.max(0,points-1);spans[1].textContent=points;saveState()});
+  addHoldable(el.querySelectorAll(".counter")[1].children[2],()=>{points++;spans[1].textContent=points;saveState()});
+  addHoldable(el.querySelectorAll(".counter")[3].children[0],()=>{warnings=Math.max(0,warnings-1);spans[3].textContent=warnings;saveState()});
+  addHoldable(el.querySelectorAll(".counter")[3].children[2],()=>{warnings++;spans[3].textContent=warnings;saveState()});
+
+  updateControls();
+  nameInput.addEventListener("input",updateTranscript);
+
+  return{
+    el,
+    get time(){return time},
+    get points(){return points},
+    get warnings(){return warnings},
+    get name(){return nameInput.value||""},
+    addPoint(){points++;spans[1].textContent=points},
+    setState(s){
+      time=s.time; points=s.points; warnings=s.warnings; nameInput.value=s.name;
+      timeDisplay.textContent=formatTimerTime(time);
+      spans[1].textContent=points; spans[3].textContent=warnings;
+      updateControls();
+      updateTranscript();
+    },
+    reset,resetTimeOnly
+  };
+}
+
+const t1=createTimer("timer1"),t2=createTimer("timer2");
+const transcript=document.getElementById("transcript");
+let transcriptEdited=false;
+transcript.addEventListener("input",()=>{transcriptEdited=true;saveState()});
+
+function checkRecord(){recordBtn.style.display=t1.time>0&&t2.time>0?"block":"none"}
+
+function recordRound(){
+  const n1=t1.name||"Team1",n2=t2.name||"Team2";
+  if(t1.time>t2.time){t1.addPoint()}
+  else if(t2.time>t1.time){t2.addPoint()}
+
+  rounds.push({
+    t1Time: t1.time,
+    t2Time: t2.time,
+    points: [t1.points, t2.points],
+    warnings: [t1.warnings, t2.warnings],
+    names: [n1, n2]
+  });
+
+  t1.resetTimeOnly(); 
+  t2.resetTimeOnly();
+  updateTranscript(); 
+  saveState();
+}
+
+function updateTranscript(){
+  if(transcriptEdited) return;
+  const left=t1.name||"Team1", right=t2.name||"Team2";
+  let text=`${left} vs ${right}\n---\n`;
+  rounds.forEach(r=>{
+    let t1Line=`${formatTranscriptTime(r.t1Time)} ${r.names[0]}`;
+    let t2Line=`${formatTranscriptTime(r.t2Time)} ${r.names[1]}`;
+    if(r.warnings[0]>0) t1Line+=` (${r.warnings[0]}W)`;
+    if(r.warnings[1]>0) t2Line+=` (${r.warnings[1]}W)`;
+    text+=t1Line+"\n"+t2Line+"\n";
+
+    if(r.points[0]>r.points[1]) text+=`${r.points[0]}-${r.points[1]} ${r.names[0]}\n---\n`;
+    else if(r.points[1]>r.points[0]) text+=`${r.points[1]}-${r.points[0]} ${r.names[1]}\n---\n`;
+    else text+=`${r.points[0]}-${r.points[1]} TIE\n---\n`;
+  });
+
+  if(rounds.length>0){
+    const last=rounds[rounds.length-1];
+    if(last.points[0]>last.points[1]){ const w=last.names[0]; transcript.value=text+`${last.points[0]}-${last.points[1]} ${w}${w.endsWith("s")?" WIN":" WINS"}` }
+    else if(last.points[1]>last.points[0]){ const w=last.names[1]; transcript.value=text+`${last.points[1]}-${last.points[0]} ${w}${w.endsWith("s")?" WIN":" WINS"}` }
+    else transcript.value=text+`${last.points[0]}-${last.points[1]} TIE`;
+  } else transcript.value=text;
+}
+
+function regenerateTranscript(){transcriptEdited=false;updateTranscript()}
+function askReset(fn){pendingReset=fn;resetModal.style.display="block"}
+function confirmReset(){pendingReset();resetModal.style.display="none";saveState()}
+function closeReset(){resetModal.style.display="none"}
+function askRestartAll(){restartAllModal.style.display="block"}
+function confirmRestartAll(){rounds=[];t1.reset();t2.reset();transcriptEdited=false;updateTranscript();restartAllModal.style.display="none";saveState()}
+function closeRestartAll(){restartAllModal.style.display="none"}
+function openSettings(){settingsModal.style.display="block"}
+function closeSettings(){settingsModal.style.display="none"}
+
+function copyTranscript(){transcript.select();document.execCommand("copy");alert("Transcript copied!")}
+
+function getTimerState(t){return{time:t.time,points:t.points,warnings:t.warnings,name:t.name}}
+
+const saved=loadState()
+if(saved){
+  Object.assign(settings,saved.settings); 
+  rounds=saved.rounds; 
+  t1.setState(saved.t1); 
+  t2.setState(saved.t2); 
+  transcript.value=saved.transcript||"";
+}
+
+const timeCapEnabledCheckbox=document.getElementById("timeCapEnabled")
+const timeCapControls=document.getElementById("timeCapControls")
+timeCapEnabledCheckbox.checked=settings.timeCapEnabled
+timeCapControls.style.display=settings.timeCapEnabled?"flex":"none"
+timeCapEnabledCheckbox.onchange=()=>{settings.timeCapEnabled=timeCapEnabledCheckbox.checked;timeCapControls.style.display=settings.timeCapEnabled?"flex":"none";saveState()}
+
+const capMinInput=document.getElementById("capMin")
+const capSecInput=document.getElementById("capSec")
+const decCapMin=document.getElementById("decCapMin")
+const incCapMin=document.getElementById("incCapMin")
+const decCapSec=document.getElementById("decCapSec")
+const incCapSec=document.getElementById("incCapSec")
+
+function updateCap(){settings.capSeconds=parseInt(capMinInput.value||0)*60+parseInt(capSecInput.value||0);saveState()}
+capMinInput.oninput=capSecInput.oninput=()=>{updateCap()}
+
+function setupHoldable(btn,fn){
+  let interval
+  btn.onmousedown=()=>{fn(); interval=setInterval(fn,120)}
+  btn.onmouseup=btn.onmouseleave=()=>clearInterval(interval)
+}
+
+setupHoldable(decCapMin,()=>{capMinInput.value=Math.max(0,parseInt(capMinInput.value)-1);updateCap()})
+setupHoldable(incCapMin,()=>{capMinInput.value=parseInt(capMinInput.value)+1;updateCap()})
+setupHoldable(decCapSec,()=>{capSecInput.value=Math.max(0,parseInt(capSecInput.value)-1);updateCap()})
+setupHoldable(incCapSec,()=>{capSecInput.value=parseInt(capSecInput.value)+1;updateCap()})
+
+const startTimeInput=document.getElementById("startTimeInput")
+const decStartTime=document.getElementById("decStartTime")
+const incStartTime=document.getElementById("incStartTime")
+
+function applyStartTimeChange(newVal){
+    settings.startTime = newVal;
+    startTimeInput.value = newVal;
+    if(t1.time <= 0){ t1.time=newVal; t1.resetTimeOnly() }
+    if(t2.time <= 0){ t2.time=newVal; t2.resetTimeOnly() }
+    saveState()
+}
+
+setupHoldable(decStartTime,()=>{applyStartTimeChange(Math.max(-30,settings.startTime-1))})
+setupHoldable(incStartTime,()=>{applyStartTimeChange(Math.min(0,settings.startTime+1))})
+startTimeInput.oninput=()=>{applyStartTimeChange(Math.max(-30,Math.min(0,parseInt(startTimeInput.value)||-10)))}
+</script>
+</body>
+</html>
