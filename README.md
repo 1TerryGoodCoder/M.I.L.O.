@@ -6,8 +6,8 @@ MILO (Match Information & Logging Organizer) is a web-based tool designed to hel
 
 ## Features
 
-* **Dual Timers**: Track time for two teams simultaneously, with optional time caps.
-* **Round Recording**: Automatically record the outcome of each round based on timer completion and points.
+* **Two Timers**: Track time for two teams simultaneously, with optional time caps.
+* **Round Tracking**: Automatically record the outcome of each round based on timer completion and points.
 * **Points & Warnings**: Easily manage points and warnings for each team, with quick increment/decrement controls.
 * **Transcripts**: a clear summary of all rounds, including scores, warnings, and winners.
 * **Saving**: Saves your timers, points, warnings, and transcript in the browser so you can resume where you left off.
