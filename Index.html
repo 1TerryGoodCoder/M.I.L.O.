@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>MILO - Match Information & Logging Organizer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+      body { font-family: Arial, sans-serif; padding:20px; background:#f0f0f0; margin:0; }
+      h1 { text-align:center; margin-top:20px; }
+      .top-bar { position: fixed; top: 10px; right:10px; display:flex; flex-wrap:wrap; gap:5px; align-items:center; z-index:5; }
+      .top-bar button { font-size:0.9em; padding:8px 12px; cursor:pointer; }
+      .timers { display:flex; justify-content: space-around; margin-top:40px; flex-wrap: wrap; }
+      .timer-box { border:1px solid #aaa; border-radius:5px; background:white; padding:15px; width:300px; text-align:center; margin-bottom:15px; flex:1 1 280px; }
+      .time { font-size:2em; margin:10px 0; }
+      .controls button { margin:5px; padding:10px 14px; font-size:1em; }
+      .counter { display:flex; justify-content:center; align-items:center; margin:6px 0; }
+      .counter button { width:50px; height:50px; font-size:1.2em; }
+      .counter span { width:50px; text-align:center; font-size:1.1em; }
+      #RecBtn { display:none; margin:25px auto 10px; padding:15px 20px; font-size:1.2em; cursor:pointer; width:90%; max-width:300px; }
+      #Text { width:90%; max-width:700px; display:block; margin:5px auto 10px; height:250px; padding:10px; font-family:monospace; resize: vertical; }
+      #CopyBtn { padding:10px 14px; cursor:pointer; font-size:1em; margin-bottom:5px; }
+      .modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:10; }
+      .panel { background:white; width:90%; max-width:400px; margin:120px auto; padding:20px; position:relative; text-align:center; border-radius:8px; }
+      .close { position:absolute; top:5px; right:8px; cursor:pointer; font-size:1.5em; }
+      input[type=number], input[type=text] { width:50px; height:42px; padding:4px; font-size:1.2em; text-align:center; }
+      .panel button { padding:12px 20px; font-size:1.2em; margin:8px; cursor:pointer; }
+      .setting-control { display:flex; align-items:center; justify-content:center; margin:5px; gap:5px; flex-wrap:wrap; }
+      .setting-control button { width:50px; height:50px; font-size:1.2em; padding:0; }
+      .setting-control label { font-size:1.2em; }
+      .setting-control span { width:40px; text-align:left; font-size:1.2em; display:inline-block; }
+    </style>
+  </head>
+  <body>
+    <h1>MILO - Match Information & Logging Organizer</h1>
+    <div class="top-bar">
+      <button onclick="RedoText()">Regenerate Transcript</button>
+      <button onclick="AskAll()">Restart All</button>
+      <button onclick="OpenSet()">Settings</button>
+    </div>
+    <div class="timers">
+      <div class="timer-box" id="Timer1"></div>
+      <div class="timer-box" id="Timer2"></div>
+    </div>
+    <button id="RecBtn" onclick="Record()">Record Round</button>
+    <div style="width:90%; max-width:700px; margin:10px auto 0;">
+      <button id="CopyBtn" onclick="CopyText()">Copy Text</button>
+    </div>
+    <textarea id="Text"></textarea>
+    <div id="ResetBox" class="modal">
+      <div class="panel">
+        <p>Are you sure you want to reset this timer?</p>
+        <button onclick="YesReset()">Yes</button>
+        <button onclick="NoReset()">No</button>
+      </div>
+    </div>
+    <div id="AllBox" class="modal">
+      <div class="panel">
+        <p>Are you sure you want to restart all?</p>
+        <button onclick="YesAll()">Yes</button>
+        <button onclick="NoAll()">No</button>
+      </div>
+    </div>
+    <div id="SetBox" class="modal">
+      <div class="panel">
+        <div class="close" onclick="CloseSet()">✕</div>
+        <h3>Settings</h3>
+        <label><input type="checkbox" id="CapOn"> Enable Time Cap</label>
+        <div id="CapBox" style="flex-direction:column;">
+          <div class="setting-control">
+            <span>Min</span>
+            <button id="DecCapMin">−</button>
+            <input type="number" id="MinIn">
+            <button id="IncCapMin">+</button>
+          </div>
+          <div class="setting-control">
+            <span>Sec</span>
+            <button id="DecCapSec">−</button>
+            <input type="number" id="SecIn">
+            <button id="IncCapSec">+</button>
+          </div>
+        </div>
+        <hr>
+        <div class="setting-control">
+          <label>Start Time (sec)</label>
+          <button id="DecStart">−</button>
+          <input type="number" id="StartIn">
+          <button id="IncStart">+</button>
+        </div>
+        <hr>
+        <label><input type="checkbox" id="Rule2"> Enable 2 Second Rule</label>
+      </div>
+    </div>
+    <script>
+      let cfg = {start:-10, capOn:true, cap:180, rule2:true};
+      let rnds = [], waitFn = null;
+
+      let text = document.getElementById("Text");
+      let recBtn = document.getElementById("RecBtn");
+
+      let saveStamp = 0;
+      function Save(force) {
+        let now = performance.now();
+        if (!force && now - saveStamp < 500) return;
+        saveStamp = now;
+        try {
+          localStorage.setItem("miloState", JSON.stringify({
+            cfg, rnds, a: GetT(t1), b: GetT(t2), text: text.value
+          }));
+        } catch(e) {}
+      }
+
+      function Load() {
+        try { return JSON.parse(localStorage.getItem("miloState")) || null; }
+        catch(e) { return null; }
+      }
+
+      function FmtT(sec) {
+        let n = sec < 0, a = Math.abs(sec), m = Math.floor(a / 60), s = Math.floor(a % 60), ms = Math.floor((a - Math.floor(a)) * 100);
+        return (n ? "-" : "") + `${m}:${s.toString().padStart(2,"0")}:${ms.toString().padStart(2,"0")}`;
+      }
+
+      function FmtS(sec) {
+        let n = sec < 0, a = Math.abs(Math.round(sec)), m = Math.floor(a / 60), s = a % 60;
+        return (n ? "-" : "") + `${m}:${s.toString().padStart(2,"0")}`;
+      }
+
+      function MakeTimer(id) {
+        let time = cfg.start;
+        let run = false;
+        let stamp = 0;
+        let off = 0;
+        let iv = null;
+        let pts = 0, warns = 0;
+        let def = id === "Timer1" ? "Team1" : "Team2";
+
+        let el = document.getElementById(id);
+        el.innerHTML = `<input placeholder="Team Name" value="${def}"><div class="time"></div><div class="controls"></div>
+        <div class="counter"><span>Points</span></div><div class="counter"><button>-</button><span>0</span><button>+</button></div>
+        <div class="counter"><span>Warnings</span></div><div class="counter"><button>-</button><span>0</span><button>+</button></div>`;
+
+        let inp = el.querySelector("input");
+        let disp = el.querySelector(".time");
+        let ctrl = el.querySelector(".controls");
+        let sp = el.querySelectorAll("span");
+
+        function UpCtrl() {
+          ctrl.innerHTML = "";
+          let b = document.createElement("button");
+          b.textContent = run ? "Pause" : "Start";
+          b.onclick = run ? Stop : Go;
+          ctrl.appendChild(b);
+          let r = document.createElement("button");
+          r.textContent = "Reset";
+          r.onclick = () => AskReset(WipeT);
+          ctrl.appendChild(r);
+        }
+
+        function Tick() {
+          if (!run) return;
+          let now = performance.now();
+          time = cfg.start + (off + (now - stamp)) / 1000;
+          if (cfg.capOn && time >= cfg.cap) {
+            off = (cfg.cap - cfg.start) * 1000 - (now - stamp);
+            time = cfg.cap;
+            disp.textContent = FmtT(time);
+            Stop();
+            return;
+          }
+          disp.textContent = FmtT(time);
+          ChkRec();
+          Save();
+        }
+
+        function Go() {
+          if (run) return;
+          run = true;
+          stamp = performance.now();
+          iv = setInterval(Tick, 16);
+          UpCtrl();
+          Save(true);
+        }
+
+        function Stop() {
+          if (!run) return;
+          run = false;
+          off += performance.now() - stamp;
+          clearInterval(iv);
+          iv = null;
+          UpCtrl();
+          Save(true);
+        }
+
+        function Wipe() {
+          clearInterval(iv);
+          run = false;
+          iv = null;
+          time = cfg.start;
+          off = 0;
+          stamp = 0;
+          pts = 0;
+          warns = 0;
+          disp.textContent = FmtT(time);
+          sp[1].textContent = pts;
+          sp[3].textContent = warns;
+          UpCtrl();
+          ChkRec();
+          Save(true);
+        }
+
+        function WipeT() {
+          clearInterval(iv);
+          run = false;
+          iv = null;
+          time = cfg.start;
+          off = 0;
+          stamp = 0;
+          disp.textContent = FmtT(time);
+          UpCtrl();
+          ChkRec();
+          Save(true);
+        }
+
+        function Base() {
+          if (!run && off === 0) {
+            time = cfg.start;
+            disp.textContent = FmtT(time);
+            ChkRec();
+          }
+        }
+
+        function Hold(btn, fn) {
+          let i;
+          btn.onmousedown = () => { fn(); i = setInterval(fn, 120); };
+          btn.onmouseup = btn.onmouseleave = () => clearInterval(i);
+        }
+
+        Hold(el.querySelectorAll(".counter")[1].children[0], () => { pts = Math.max(0, pts - 1); sp[1].textContent = pts; Save(true); });
+        Hold(el.querySelectorAll(".counter")[1].children[2], () => { pts++; sp[1].textContent = pts; Save(true); });
+        Hold(el.querySelectorAll(".counter")[3].children[0], () => { warns = Math.max(0, warns - 1); sp[3].textContent = warns; Save(true); });
+        Hold(el.querySelectorAll(".counter")[3].children[2], () => { warns++; sp[3].textContent = warns; Save(true); });
+
+        inp.addEventListener("input", () => { RedoText(); Save(true); });
+
+        UpCtrl();
+        disp.textContent = FmtT(time);
+
+        return {
+          get time() { return time; },
+          get pts() { return pts; },
+          get warns() { return warns; },
+          get name() { return inp.value || ""; },
+          AddPoint() { pts++; sp[1].textContent = pts; },
+          Set(s) {
+            if (!s) return;
+            time = s.time;
+            pts = s.points || 0;
+            warns = s.warnings || 0;
+            inp.value = (typeof s.name === "string" && s.name.trim() !== "") ? s.name : def;
+            off = 0;
+            stamp = 0;
+            run = false;
+            if (iv) { clearInterval(iv); iv = null; }
+            disp.textContent = FmtT(time);
+            sp[1].textContent = pts;
+            sp[3].textContent = warns;
+            UpCtrl();
+          },
+          Base, Wipe, WipeT
+        };
+      }
+
+      const t1 = MakeTimer("Timer1"), t2 = MakeTimer("Timer2");
+
+      function ChkRec() {
+        recBtn.style.display = (t1.time > 0 && t2.time > 0) ? "block" : "none";
+      }
+
+      function Record() {
+        if (!(t1.time > 0 && t2.time > 0)) return;
+        let diff = Math.abs(t1.time - t2.time);
+        let tie = cfg.rule2 && diff <= 2;
+        if (!tie) {
+          if (t1.time > t2.time) t1.AddPoint();
+          else if (t2.time > t1.time) t2.AddPoint();
+        }
+        rnds.push({
+          aTime: t1.time, bTime: t2.time,
+          points: [t1.pts, t2.pts],
+          warns: [t1.warns, t2.warns],
+          names: [t1.name || "Team1", t2.name || "Team2"]
+        });
+        t1.WipeT(); t2.WipeT();
+        RedoText(); Save(true);
+      }
+
+      function RedoText() {
+        let left = t1.name || "Team1";
+        let right = t2.name || "Team2";
+        let out = `${left} vs ${right}\n---\n`;
+        rnds.forEach(r => {
+          out += `${FmtS(r.aTime)} ${left}${r.warns[0] ? ` (${r.warns[0]}W)` : ""}\n`;
+          out += `${FmtS(r.bTime)} ${right}${r.warns[1] ? ` (${r.warns[1]}W)` : ""}\n`;
+          if (r.points[0] > r.points[1]) out += `${r.points[0]}-${r.points[1]} ${left}\n---\n`;
+          else if (r.points[1] > r.points[0]) out += `${r.points[1]}-${r.points[0]} ${right}\n---\n`;
+          else out += `${r.points[0]}-${r.points[1]} TIE\n---\n`;
+        });
+        if (rnds.length) {
+          let r = rnds.at(-1);
+          if (r.points[0] > r.points[1]) out += `${r.points[0]}-${r.points[1]} ${left} WINS`;
+          else if (r.points[1] > r.points[0]) out += `${r.points[1]}-${r.points[0]} ${right} WINS`;
+          else out += `${r.points[0]}-${r.points[1]} TIE`;
+        }
+        text.value = out;
+      }
+
+      function AskReset(fn) { waitFn = fn; document.getElementById("ResetBox").style.display = "block"; }
+      function YesReset() { if (waitFn) waitFn(); waitFn = null; document.getElementById("ResetBox").style.display = "none"; }
+      function NoReset() { document.getElementById("ResetBox").style.display = "none"; }
+
+      function AskAll() { document.getElementById("AllBox").style.display = "block"; }
+      function YesAll() {
+        rnds = [];
+        t1.Wipe(); t2.Wipe();
+        RedoText();
+        document.getElementById("AllBox").style.display = "none";
+        Save(true);
+      }
+      function NoAll() { document.getElementById("AllBox").style.display = "none"; }
+
+      function OpenSet() { SetUI(); document.getElementById("SetBox").style.display = "block"; }
+      function CloseSet() { document.getElementById("SetBox").style.display = "none"; }
+
+      function CopyText() { text.select(); document.execCommand("copy"); }
+
+      function GetT(t) { return { time: t.time, points: t.pts, warnings: t.warns, name: t.name }; }
+
+      let capCb = document.getElementById("CapOn");
+      let capBox = document.getElementById("CapBox");
+      let minIn = document.getElementById("MinIn");
+      let secIn = document.getElementById("SecIn");
+      let startIn = document.getElementById("StartIn");
+      let rule2Cb = document.getElementById("Rule2");
+
+      function SetUI() {
+        capCb.checked = cfg.capOn;
+        rule2Cb.checked = cfg.rule2;
+        minIn.value = Math.floor(cfg.cap / 60);
+        secIn.value = cfg.cap % 60;
+        startIn.value = cfg.start;
+        capBox.style.display = cfg.capOn ? "" : "none";
+      }
+
+      capCb.addEventListener("change", () => {
+        cfg.capOn = capCb.checked;
+        capBox.style.display = cfg.capOn ? "" : "none";
+        Save(true);
+      });
+
+      rule2Cb.addEventListener("change", () => { cfg.rule2 = rule2Cb.checked; Save(true); });
+
+      minIn.addEventListener("input", () => {
+        let m = Math.max(0, parseInt(minIn.value) || 0);
+        cfg.cap = m * 60 + (cfg.cap % 60);
+        Save(true);
+      });
+      minIn.addEventListener("blur", SetUI);
+
+      secIn.addEventListener("input", () => {
+        let s = Math.min(59, Math.max(0, parseInt(secIn.value) || 0));
+        cfg.cap = Math.floor(cfg.cap / 60) * 60 + s;
+        Save(true);
+      });
+      secIn.addEventListener("blur", SetUI);
+
+      startIn.addEventListener("input", () => {
+        cfg.start = parseInt(startIn.value) || 0;
+        t1.Base(); t2.Base();
+        Save(true);
+      });
+      startIn.addEventListener("blur", SetUI);
+
+      function HoldBtn(btn, fn) {
+        let i;
+        let fire = () => { fn(); SetUI(); Save(true); };
+        btn.addEventListener("mousedown", () => { fire(); i = setInterval(fire, 120); });
+        btn.addEventListener("mouseup", () => clearInterval(i));
+        btn.addEventListener("mouseleave", () => clearInterval(i));
+      }
+
+      HoldBtn(document.getElementById("DecCapMin"), () => { cfg.cap = Math.max(0, cfg.cap - 60); });
+      HoldBtn(document.getElementById("IncCapMin"), () => { cfg.cap = Math.min(5999, cfg.cap + 60); });
+      HoldBtn(document.getElementById("DecCapSec"), () => { cfg.cap = Math.max(0, cfg.cap - 1); });
+      HoldBtn(document.getElementById("IncCapSec"), () => { cfg.cap = Math.min(5999, cfg.cap + 1); });
+      HoldBtn(document.getElementById("DecStart"), () => { cfg.start -= 1; t1.Base(); t2.Base(); });
+      HoldBtn(document.getElementById("IncStart"), () => { cfg.start += 1; t1.Base(); t2.Base(); });
+
+      let s = Load();
+      if (s) {
+        Object.assign(cfg, s.cfg || {});
+        rnds = s.rnds || [];
+        t1.Set(s.a);
+        t2.Set(s.b);
+        text.value = s.text || "";
+      }
+      SetUI();
+      RedoText();
+      ChkRec();
+    </script>
+  </body>
+</html>
