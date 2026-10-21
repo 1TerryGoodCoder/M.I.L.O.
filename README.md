@@ -4,6 +4,8 @@ MILO (Match Information & Logging Organizer) is a web tool to help organize, tim
 
 `This is also my first ever HTML/JavaScript project (which is why there is minimal styling)`
 
+Website: https://1terrygoodcoder.github.io/M.I.L.O./
+
 ---
 
 ## Features
