@@ -3,6 +3,7 @@
 MILO (Match Information & Logging Organizer) is a web tool to help organize, time, and track cgt matches
 
 This is also my first ever HTML/JavaScript project (which is why there is minimal styling)
+
 ---
 
 ## Features
